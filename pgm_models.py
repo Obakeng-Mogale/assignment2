@@ -1,3 +1,4 @@
+import matplotlib.pyplot as plt
 import numpy as np
 
 
@@ -120,75 +121,125 @@ class LogisticRegression:
     """
     2 class case
     """
-    def __init__(self):
+    def __init__(self, lambda_ = 1.0):
         self.data = None
         self.response = None
         self.class_means = {}
-        self.prior_class_probabilities = None
-        self.class_variances = None
         self.d = None
         self.n = None
         self.gradient = None
+        self.lambda_param = None
+        self.lambda_ = lambda_
+        self.H = None
         return
-    def fit(self, X, y):
+
+    def fit(self, X, y, iterations =10, tolerance = 0.001):
         self.d , self.n = X.shape
         # adding the 1s columns
         one_vec = np.ones(self.n)
-        self.w = np.zeros(self.n+1)
+        self.w = np.zeros(self.d+1)
         self.response = y
 
         """contains the w vectors"""
-        self.data = np.vstack([X, one_vec])
+        self.data = np.vstack([one_vec, X])
+
+        """ newton_raphson loop"""
+        for i in range(iterations):
+            self.newton_raphson()
         return
 
     def predict(self, X):
-        return
-
-    def get_cov(self):
-        return 
+        n = X.shape[1]
+        one_vec = np.ones(n)
+        X = np.vstack([one_vec, X])
+        a = self.w.T @ X
+        prob = 1/(1+np.exp(-a))
+        return np.where(prob>0.5,1,0)
 
     def sigmoid(self):
-        return 1/(1+np.exp(-(self.w.T @ self.data @)))
-    
+        a = self.w.T @ self.data
+
+        return  1 / (1 + np.exp(-a))   
     def get_gradient(self):
-        for n in range(self.n):
-            self.gradient += (self.sigmoid()[:,n] - self.response ) @
-                self.data[:,n] + 1/self.lambda * self.w
-        return 
+        self.gradient = self.data @ (self.sigmoid() - self.response ) + (1 /self.lambda_) * self.w
+        return self.gradient
 
     def get_Hessian(self):
-        for n in range(self.n):
-            self.H = self.sigmoid()[:,n]@(1-self.sigmoid()[:,n]) @
-                self.data[:,n]@ self.data[:,n].T + 1/self.lambda * np.eye(self.n)
-        return
+        self.H = self.data @ np.diag(self.sigmoid() * (1-self.sigmoid()))  @ self.data.T +(1/self.lambda_) * np.eye(self.d + 1)
+        return self.H
 
     def newton_raphson(self):
+        self.w = self.w - np.linalg.inv(self.get_Hessian()) @ self.get_gradient()
+        return 
+class Softmax_Classifier:
+    def __init__(self):
+        self.d = None
+        self.n = None
+        self.W = None
+
+    def fit(self, X, y):
+        return
+    def predict(self, X):
+        return
+
+    def sigmoid(self):
         return 
 
+    def get_gradient(self):
+        return
+
+    def gradient_descent(self):
+        return
     
 if __name__ == "__main__":
-    model = GaussianNB()
-    X = np.array([
-        [-1.1, -0.9], # C1 sample 1
-        [-0.9, -1.1], # C1 sample 2
-        [-1.0, -1.0], # C1 sample 3
-        [ 0.9,  1.1], # C2 sample 1
-        [ 1.1,  0.9], # C2 sample 2
-        [ 1.0,  1.0]  # C2 sample 3
-        ])
+# Set a random seed so you get the same dataset every time you run it
+    np.random.seed(42)
 
-    X = X.T
-    y = np.array([0, 0, 0, 1, 1, 1])
-    
-    X_test = np.array([
-    [-1.0, -1.0],  # Case A: Exactly on Mean C0
-    [ 1.0,  1.0],  # Case B: Exactly on Mean C1
-    [-0.5, -0.5],  # Case C: Deep in C0 territory
-    [ 0.0,  0.0],  # Case D: The exact Decision Boundary
-    [ 2.0,  2.0]   # Case E: Far out in C1 territory
-    ])
-    X_test = X_test.T
-    model.fit(X, y)
-    print(model.class_means)
-    print(model.cov)
-    print(model.predict(X_test))
+# Define the number of data points per class
+    N = 100
+
+# ---------------------------------------------------------
+# Create Class 0
+# Centered around coordinates (2, 2)
+# ---------------------------------------------------------
+    mean_0 = [2, 2]
+    cov_0 = [[1, 0.5], 
+            [0.5, 1]]  # Covariance matrix dictates the "shape" of the cluster
+    X_0 = np.random.multivariate_normal(mean_0, cov_0, N)
+    y_0 = np.zeros(N)   # Labels for Class 0 are all 0s
+
+
+# ---------------------------------------------------------
+# Create Class 1
+# Centered around coordinates (-2, -2)
+# ---------------------------------------------------------
+    mean_1 = [-2, -2]
+    cov_1 = [[1, 0.5], 
+            [0.5, 1]]
+    X_1 = np.random.multivariate_normal(mean_1, cov_1, N)
+    y_1 = np.ones(N)    # Labels for Class 1 are all 1s
+
+# ---------------------------------------------------------
+# Combine and Shuffle
+# ---------------------------------------------------------
+    X = np.vstack((X_0, X_1)) # Shape becomes (200, 2)
+    y = np.hstack((y_0, y_1)) # Shape becomes (200,)
+
+# It's good practice to shuffle your data so the model 
+# doesn't see all 0s followed by all 1s
+    shuffle_idx = np.random.permutation(2 * N)
+    X = X[shuffle_idx]
+    y = y[shuffle_idx]
+
+# ---------------------------------------------------------
+# Visualize the Dataset
+# ---------------------------------------------------------
+    plt.figure(figsize=(8, 6))
+    plt.scatter(X[y == 0][:, 0], X[y == 0][:, 1], color='red', label='Class 0', alpha=0.7)
+    plt.scatter(X[y == 1][:, 0], X[y == 1][:, 1], color='blue', label='Class 1', alpha=0.7)
+    plt.title("Synthetic 2-Class Dataset for Logistic Regression")
+    plt.xlabel("Feature 1")
+    plt.ylabel("Feature 2")
+    plt.legend()
+    plt.grid(True)
+    plt.show()
