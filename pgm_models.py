@@ -171,25 +171,53 @@ class LogisticRegression:
     def newton_raphson(self):
         self.w = self.w - np.linalg.inv(self.get_Hessian()) @ self.get_gradient()
         return 
+""" Multiple LogisticRegression class"""
 class Softmax_Classifier:
-    def __init__(self):
+    def __init__(self, lr=1):
         self.d = None
         self.n = None
         self.W = None
-
-    def fit(self, X, y):
-        return
-    def predict(self, X):
-        return
-
-    def sigmoid(self):
+        self.one_hot = None # also known as tn
+        self.lr = lr
         return 
 
-    def get_gradient(self):
+    def fit(self, X, y): 
+        self.d,self.n = X.shape
+        self.one_hot = np.eye(np.unique(y).shape[0],dtype = int)[y].T
+        one_vec = np.ones(self.n)
+        self.data = np.vstack([one_vec, X])
+        #initialize W 
+        self.W = np.zeros((self.d+1, np.unique(y).shape[0]))
+        for i in range(1):
+            self.gradient_descent()
         return
 
+    def predict(self, X):
+        n = X.shape[1]
+        one_vec = np.ones(n)
+        X = np.vstack([one_vec, X])
+        a = self.W.T @ X
+        exp_a = np.exp(a)
+        prob =  exp_a/np.sum(exp_a, axis = 0)
+        return np.argmax(prob, axis = 0)
+
+    def sigmoid_softmax(self):
+        a = self.W.T @ self.data
+        exp_a = np.exp(a)
+        return exp_a/np.sum(exp_a, axis = 0) 
+
+    def get_gradient(self):
+# 1. The pure error matrix: Y - T (shape: k x n)
+        error = self.sigmoid_softmax() - self.one_hot
+        
+        # 2. Matrix multiplication handles the summation over all n samples!
+        # self.data is (d+1, n), error.T is (n, k) -> result is (d+1, k)
+        self.gradient = self.data @ error.T
+        return self.gradient 
+
     def gradient_descent(self):
-        return
+        self.W = self.W - self.lr * self.get_gradient()
+        return 
     
 if __name__ == "__main__":
 # Set a random seed so you get the same dataset every time you run it
