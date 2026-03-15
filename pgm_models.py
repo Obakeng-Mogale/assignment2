@@ -58,35 +58,43 @@ class GaussianNB:
         return self.cov
 
     def gaussianpdf(self, x):
-        n_classes = np.unique(self.response).shape[0]
+        n_classes = len(np.unique(self.response))
         n_samples = x.shape[1]
-        # pred should be (n_classes, n_samples)
         pred = np.zeros((n_classes, n_samples))
-    
-        # Loop through each individual test sample
-        for sample_idx in range(n_samples):
-            # Extract the specific d-dimensional vector for this sample
-            current_x = x[:, sample_idx].reshape(-1, 1) 
         
-            # Loop through each class to get the likelihood for this sample
-            for class_idx, label in enumerate(np.unique(self.response)):
-                """coefficient""" 
-                det_val = np.linalg.det(np.diag(2 * np.pi * self.cov[label]))
-                a = 1 / np.sqrt(det_val)
+        # We still loop over classes (usually a small number like 2 to 10), 
+        # but we process ALL samples for that class at once!
+        for class_idx, label in enumerate(np.unique(self.response)):
             
-                """
-                diff = x-muj
-                inv_cov = sigma^-1
-                """
-                diff = current_x - self.class_means[label].reshape(-1, 1)
-                inv_cov = np.linalg.inv(np.diag(self.cov[label]))
+            # mu shape: (d, 1)
+            mu = self.class_means[label] 
             
-                # Use .item() to avoid the "sequence" ValueError from before
-                exponent = -0.5 * (diff.T @ inv_cov @ diff)
-                b = np.exp(exponent.item())
+            # var shape: (d, 1) - Extract the diagonal variances
+            var = self.cov[label].reshape(-1, 1) 
             
-                # Store likelihood for this class and this sample
-                pred[class_idx, sample_idx] = a * b
+            # 1. OPTIMIZE DETERMINANT: 
+            # The determinant of a diagonal matrix is just the product of its diagonal elements.
+            # det(2 * pi * Cov) = Product(2 * pi * variance_i)
+            det_val = np.prod(2 * np.pi * var)
+            a = 1.0 / np.sqrt(det_val)
+            
+            # 2. BROADCASTING:
+            # x is shape (d, N), mu is shape (d, 1). 
+            # NumPy automatically subtracts mu from EVERY column in x simultaneously!
+            diff = x - mu 
+            
+            # 3. OPTIMIZE MATRIX INVERSE & MULTIPLICATION:
+            # For a diagonal matrix, (x - mu)^T * Cov^-1 * (x - mu) strictly simplifies 
+            # to the sum of ((x - mu)^2 / variance) across all features.
+            # diff**2 / var calculates this for ALL samples simultaneously yielding shape (d, N).
+            # np.sum(..., axis=0) sums down the columns, yielding an array of shape (N,)
+            exponent = -0.5 * np.sum((diff ** 2) / var, axis=0)
+            
+            # 4. CALCULATE EXPONENTIAL FOR ALL SAMPLES
+            b = np.exp(exponent)
+            
+            # Store the likelihoods for this class (shape N,)
+            pred[class_idx, :] = a * b
 
         return pred
 
@@ -103,16 +111,27 @@ class GaussianNB:
 
     def get_odds(self, X):
         probs = self.get_probs(X)
-        n_classes = np.unique(self.response).shape[0]
+        n_classes, n_samples = probs.shape
+       
         self.odds = np.zeros((n_classes,n_samples))
         for x in range(n_classes):
-            self.odds[i] = probs[i,:] / 1-probs[i,:] 
+            self.odds[i] = probs[i,:] / (1-probs[i,:]) 
         return self.odds
 
     def get_log_odds(self, X):
         self.log_odds = np.log(self.get_odds(X))
         return self.log_odds
+    def predict_log_proba(self, X):
+        """Returns the log of the posterior probabilities."""
+        # Add a tiny epsilon to prevent log(0)
+   
+        probs = self.get_probs(X)
+        return np.log(probs)
 
+    def score(self, X, y):
+        """Returns the accuracy of the model."""
+        predictions = self.predict(X)
+        return np.mean(predictions == y)
 
 
 """ LogisticRegression implementation"""
@@ -147,6 +166,45 @@ class LogisticRegression:
         for i in range(iterations):
             self.newton_raphson()
         return
+    def get_loss(self):
+        """Calculates the negative log-posterior."""
+        preds = self.sigmoid()
+        # Add a tiny epsilon (e.g., 1e-15) inside logs to prevent log(0) errors
+        eps = 1e-15 
+        log_likelihood = np.sum(self.response * np.log(preds + eps) + 
+                               (1 - self.response) * np.log(1 - preds + eps))
+        
+        # Include the L2 regularization penalty term (1/2 * lambda * w^T * w)
+        penalty = (1 / (2 * self.lambda_)) * np.sum(self.w**2)
+        
+        return -log_likelihood + penalty
+
+    def get_bias(self):
+        """Returns the bias term (w_0)."""
+        return self.w[0] # Use self.W[0, :] for Softmax
+    def score(self, X, y):
+        """Returns the accuracy of the model."""
+        predictions = self.predict(X)
+        return np.mean(predictions == y)
+    def get_weights(self):
+        """Returns the feature weights (w_1 to w_d)."""
+        return self.w[1:] # Use self.W[1:, :] for Softmax
+
+        
+    def predict_proba(self, X):
+        """Returns the raw probabilities for the input data."""
+        n = X.shape[1]
+        one_vec = np.ones(n)
+        X_aug = np.vstack([one_vec, X])
+        
+        a = self.w.T @ X_aug # Use self.W.T for Softmax_Classifier
+        
+        # For 2-class:
+        return 1 / (1 + np.exp(-a)) 
+        
+        # For Softmax_Classifier use:
+        # exp_a = np.exp(a)
+        # return exp_a / np.sum(exp_a, axis=0)`
 
     def predict(self, X):
         n = X.shape[1]
