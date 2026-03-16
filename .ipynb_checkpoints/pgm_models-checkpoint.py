@@ -14,6 +14,7 @@ class GaussianNB:
         self.d = None
         self.log_odds = None
         self.odds = None
+        self.update_mat = None
         return
 
     def fit(self, X, y):
@@ -52,11 +53,46 @@ class GaussianNB:
             nj = xnj.shape[1]
             sigma2 = np.sum((xnj- self.class_means[label])**2, axis = 1 )
             sigma2 = sigma2/nj
-            print(sigma2)
+            #print(sigma2)
             self.cov[label] = sigma2
             i+=1 
         return self.cov
+    def gaussianpdfs(self, x):
+        n_classes = np.unique(self.response).shape[0]
+        n_samples = x.shape[1]
+        # pred should be (n_classes, n_samples)
+        pred = np.zeros((n_classes, n_samples))
+        # Loop through each individual test sample
 
+        for sample_idx in range(n_samples):
+
+            # Extract the specific d-dimensional vector for this sample
+
+            current_x = x[:, sample_idx].reshape(-1, 1) 
+
+        
+
+            # Loop through each class to get the likelihood for this sample
+
+            for class_idx, label in enumerate(np.unique(self.response)):
+
+                """coefficient""" 
+                det_val = np.linalg.det(np.diag(2 * np.pi * self.cov[label]))
+                a = 1 / np.sqrt(det_val)
+                """
+                diff = x-muj
+                inv_cov = sigma^-1
+                """
+                diff = current_x - self.class_means[label].reshape(-1, 1)
+                inv_cov = np.linalg.inv(np.diag(self.cov[label]))
+                # Use .item() to avoid the "sequence" ValueError from before
+
+                exponent = -0.5 * (diff.T @ inv_cov @ diff)
+
+                b = np.exp(exponent.item())
+                # Store likelihood for this class and this sample
+                pred[class_idx, sample_idx] = a * b
+        return pred
     def gaussianpdf(self, x):
         n_classes = len(np.unique(self.response))
         n_samples = x.shape[1]
@@ -114,11 +150,13 @@ class GaussianNB:
         n_classes, n_samples = probs.shape
        
         self.odds = np.zeros((n_classes,n_samples))
-        for x in range(n_classes):
+        for i in range(n_classes):
+            #self.odds[i, :] = probs[i,:] / (1 - probs[i,:] + 1e-15)
             self.odds[i] = probs[i,:] / (1-probs[i,:]) 
         return self.odds
 
     def get_log_odds(self, X):
+       # self.log_odds = np.log(self.get_odds(X) + 1e-15)
         self.log_odds = np.log(self.get_odds(X))
         return self.log_odds
     def predict_log_proba(self, X):
@@ -126,7 +164,38 @@ class GaussianNB:
         # Add a tiny epsilon to prevent log(0)
    
         probs = self.get_probs(X)
+        """uncommoent if div0 err"""
+        #return np.log(probs + 1e-15)
         return np.log(probs)
+
+    def get_joint_log_likelihood(self, X):
+        """Calculates the unnormalized log-posterior: ln(P(x|C)) + ln(P(C))."""
+        likelihoods = self.gaussianpdf(X)
+        n_classes = len(np.unique(self.response))
+        n_samples = X.shape[1]
+        
+        joint_log_lik = np.zeros((n_classes, n_samples))
+        for i, label in enumerate(np.unique(self.response)):
+            # Add epsilon to prevent log(0)
+            log_lik = np.log(likelihoods[i, :] + 1e-15)
+            log_prior = np.log(self.prior_class_probabilities[label])
+            joint_log_lik[i, :] = log_lik + log_prior
+            
+        return joint_log_lik
+
+    def get_marginal_log_likelihood(self, X):
+        """
+        Calculates the log of the evidence/denominator using the Log-Sum-Exp trick.
+        p(x) = sum(p(x|C) * p(C))
+        """
+        joint_log_lik = self.get_joint_log_likelihood(X)
+        
+        # Log-Sum-Exp trick for numerical stability
+        max_log = np.max(joint_log_lik, axis=0)
+        # Subtract max before exp, then add it back outside the log
+        marginal = max_log + np.log(np.sum(np.exp(joint_log_lik - max_log), axis=0))
+        
+        return marginal
 
     def score(self, X, y):
         """Returns the accuracy of the model."""
@@ -166,6 +235,18 @@ class LogisticRegression:
         for i in range(iterations):
             self.newton_raphson()
         return
+    def get_log_odds(self, X):
+        """
+        In Binary Logistic Regression, the log-odds is mathematically 
+        identical to the linear activation a = w^T * x.
+        """
+        n = X.shape[1]
+        one_vec = np.ones(n)
+        X_aug = np.vstack([one_vec, X])
+        
+        # We don't need to run it through the sigmoid, just return the linear part!
+        log_odds = self.w.T @ X_aug
+        return log_odds
     def get_loss(self):
         """Calculates the negative log-posterior."""
         preds = self.sigmoid()
@@ -200,6 +281,7 @@ class LogisticRegression:
         a = self.w.T @ X_aug # Use self.W.T for Softmax_Classifier
         
         # For 2-class:
+        
         return 1 / (1 + np.exp(-a)) 
         
         # For Softmax_Classifier use:
@@ -227,8 +309,35 @@ class LogisticRegression:
         return self.H
 
     def newton_raphson(self):
+        self.update_mat = np.linalg.inv(self.get_Hessian()) @ self.get_gradient()
         self.w = self.w - np.linalg.inv(self.get_Hessian()) @ self.get_gradient()
         return 
+    def get_weighting_matrix(self):
+        """
+        Returns the NxN diagonal weighting matrix S.
+        The diagonal contains the variance of the predictions: sigma * (1 - sigma).
+        """
+        if self.data is None:
+            raise ValueError("Model must be fitted to extract the weighting matrix.")
+            
+        preds = self.sigmoid()
+        # Create a diagonal matrix from the 1D array of variances
+        S = np.diag(preds * (1 - preds))
+        return S
+
+    def get_update_vector(self):
+        """
+        Returns the Delta w step size (H^-1 * Gradient) based on current weights.
+        """
+        if self.data is None:
+            raise ValueError("Model must be fitted to extract the update vector.")
+            
+        H_inv = np.linalg.inv(self.get_Hessian())
+        grad = self.get_gradient()
+        
+        delta_w = H_inv @ grad
+        return delta_w
+
 """ Multiple LogisticRegression class"""
 class Softmax_Classifier:
     def __init__(self, lr=1):
@@ -277,55 +386,124 @@ class Softmax_Classifier:
         self.W = self.W - self.lr * self.get_gradient()
         return 
     
+
 if __name__ == "__main__":
-# Set a random seed so you get the same dataset every time you run it
-    np.random.seed(42)
+    from sklearn.datasets import make_classification
+    from sklearn.naive_bayes import GaussianNB as SklearnGaussianNB
+    from sklearn.linear_model import LogisticRegression as SklearnLogisticRegression
+    import numpy as np
 
-# Define the number of data points per class
-    N = 100
+    # ==========================================
+    # 0. Generate Random 2-Class Data
+    # ==========================================
+    print("Generating random dataset (100 samples, 4 features)...")
+    X, y = make_classification(n_samples=100, n_features=4, n_classes=2, 
+                               n_informative=2, random_state=42)
 
-# ---------------------------------------------------------
-# Create Class 0
-# Centered around coordinates (2, 2)
-# ---------------------------------------------------------
-    mean_0 = [2, 2]
-    cov_0 = [[1, 0.5], 
-            [0.5, 1]]  # Covariance matrix dictates the "shape" of the cluster
-    X_0 = np.random.multivariate_normal(mean_0, cov_0, N)
-    y_0 = np.zeros(N)   # Labels for Class 0 are all 0s
+    # ==========================================
+    # 1. Test Gaussian Naive Bayes
+    # ==========================================
+    print("\n" + "="*50)
+    print("TESTING GAUSSIAN NAIVE BAYES")
+    print("="*50)
+
+    # Fit Custom Model
+    custom_gnb = GaussianNB()
+    custom_gnb.fit(X.T, y)
+
+    # Fit Sklearn Model
+    sk_gnb = SklearnGaussianNB()
+    sk_gnb.fit(X, y)
+
+    # --- Compare Means ---
+    # Sklearn stores means in shape (k, d). Custom stores as a dict of (d, 1) vectors.
+    custom_means = np.vstack([custom_gnb.class_means[0].T, custom_gnb.class_means[1].T])
+    print("\nClass Means Match:")
+    print(np.allclose(custom_means, sk_gnb.theta_))
+
+    # --- Compare Predictions ---
+    custom_preds = custom_gnb.predict(X.T)
+    sk_preds = sk_gnb.predict(X)
+    print("Predictions Match exactly:")
+    print(np.array_equal(custom_preds, sk_preds))
+
+    # --- Compare Probabilities ---
+    # Custom get_probs returns (k, N). Sklearn returns (N, k). We must transpose!
+    custom_probs = custom_gnb.get_probs(X.T).T
+    sk_probs = sk_gnb.predict_proba(X)
+    
+    # We use allclose because floating point math might differ by 0.0000000001
+    print("Probabilities Match (within tolerance):")
+    print(np.allclose(custom_probs, sk_probs, atol=1e-5))
+
+    # --- Compare Log-Probabilities ---
+    custom_log_probs = custom_gnb.predict_log_proba(X.T).T
+    sk_log_probs = sk_gnb.predict_log_proba(X)
+    print("Log-Probabilities Match (within tolerance):")
+    print(np.allclose(custom_log_probs, sk_log_probs, atol=1e-5))
 
 
-# ---------------------------------------------------------
-# Create Class 1
-# Centered around coordinates (-2, -2)
-# ---------------------------------------------------------
-    mean_1 = [-2, -2]
-    cov_1 = [[1, 0.5], 
-            [0.5, 1]]
-    X_1 = np.random.multivariate_normal(mean_1, cov_1, N)
-    y_1 = np.ones(N)    # Labels for Class 1 are all 1s
+    # ==========================================
+    # 2. Test Binary Logistic Regression
+    # ==========================================
+    print("\n" + "="*50)
+    print("TESTING BINARY LOGISTIC REGRESSION")
+    print("="*50)
 
-# ---------------------------------------------------------
-# Combine and Shuffle
-# ---------------------------------------------------------
-    X = np.vstack((X_0, X_1)) # Shape becomes (200, 2)
-    y = np.hstack((y_0, y_1)) # Shape becomes (200,)
+    # Fit Custom Model
+    # We use a massive lambda (1e9) to effectively turn off regularization 
+    # so we can perfectly match Sklearn's unregularized setup.
+    custom_lr = LogisticRegression(lambda_=1e9)
+    custom_lr.fit(X.T, y, iterations=15) # Give it enough iterations to converge
 
-# It's good practice to shuffle your data so the model 
-# doesn't see all 0s followed by all 1s
-    shuffle_idx = np.random.permutation(2 * N)
-    X = X[shuffle_idx]
-    y = y[shuffle_idx]
+    # Fit Sklearn Model
+    # penalty=None turns off regularization to match our math
+    sk_lr = SklearnLogisticRegression(penalty=None, solver='lbfgs')
+    sk_lr.fit(X, y)
 
-# ---------------------------------------------------------
-# Visualize the Dataset
-# ---------------------------------------------------------
-    plt.figure(figsize=(8, 6))
-    plt.scatter(X[y == 0][:, 0], X[y == 0][:, 1], color='red', label='Class 0', alpha=0.7)
-    plt.scatter(X[y == 1][:, 0], X[y == 1][:, 1], color='blue', label='Class 1', alpha=0.7)
-    plt.title("Synthetic 2-Class Dataset for Logistic Regression")
-    plt.xlabel("Feature 1")
-    plt.ylabel("Feature 2")
-    plt.legend()
-    plt.grid(True)
-    plt.show()
+    # --- Compare Weights and Bias ---
+    custom_weights = custom_lr.get_weights()
+    custom_bias = custom_lr.get_bias()
+    
+    sk_weights = sk_lr.coef_[0]
+    sk_bias = sk_lr.intercept_[0]
+
+    print("\nWeights Match:")
+    print(np.allclose(custom_weights, sk_weights, atol=1e-4))
+    
+    print("Bias Match:")
+    print(np.allclose(custom_bias, sk_bias, atol=1e-4))
+
+    # --- Compare Log-Odds (Logits) ---
+    custom_log_odds = custom_lr.get_log_odds(X.T)
+    sk_log_odds = sk_lr.decision_function(X)
+    print("Log-Odds / Decision Function Match:")
+    print(np.allclose(custom_log_odds, sk_log_odds, atol=1e-4))
+
+    # --- Compare Probabilities ---
+    custom_lr_probs = custom_lr.predict_proba(X.T)
+    # Sklearn returns [P(y=0), P(y=1)]. We only want P(y=1) to match our custom sigmoid.
+    sk_lr_probs = sk_lr.predict_proba(X)[:, 1] 
+    print("Probabilities Match:")
+    print(np.allclose(custom_lr_probs, sk_lr_probs, atol=1e-4))
+
+    # --- Compare Predictions ---
+    custom_lr_preds = custom_lr.predict(X.T)
+    sk_lr_preds = sk_lr.predict(X)
+    print("Predictions Match exactly:")
+    print(np.array_equal(custom_lr_preds, sk_lr_preds))
+    """def get_odds(self, X):
+        probs = self.get_probs(X)
+        n_classes, n_samples = probs.shape
+       
+        self.odds = np.zeros((n_classes,n_samples))
+        # FIX: Changed 'for x in...' to 'for i in...'
+        for i in range(n_classes): 
+            # FIX: Added 1e-15 to the denominator to prevent division by zero
+            self.odds[i, :] = probs[i,:] / (1 - probs[i,:] + 1e-15) 
+        return self.odds
+
+    def get_log_odds(self, X):
+        # FIX: Add a tiny epsilon to prevent np.log(0) which yields -inf
+        self.log_odds = np.log(self.get_odds(X) + 1e-15)
+        return self.log_odds"""
